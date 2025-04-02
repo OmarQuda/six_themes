@@ -4,72 +4,44 @@ import os
 import time
 import json
 import random
-import requests
 from pathlib import Path
+import requests
 
-# Define a function to call the FastAPI endpoint running in Colab
-def process_video_api(video_file, api_url):
+# Connection to the remote processing endpoint
+def process_video_remote(video_path, api_url):
     """
-    Process a video by sending it to the FastAPI endpoint running in Google Colab
+    Send video to remote API endpoint for processing
     
     Args:
-        video_file (file): Video file object
-        api_url (str): URL of the FastAPI endpoint
+        video_path (str): Path to the input video
+        api_url (str): URL to the FastAPI endpoint
         
     Returns:
-        dict: Results and scores from the video analysis
+        dict: Results and scores for different skills
     """
-    try:
-        # Prepare the file for upload
-        files = {
-            'file': ('video.mp4', video_file.read(), 'video/mp4')
-        }
+    # Prepare the file for upload
+    with open(video_path, 'rb') as video_file:
+        files = {'video': video_file}
         
-        # Show progress while uploading
-        with st.spinner('Uploading video to API...'):
-            # Make the API request
-            response = requests.post(
-                api_url,
-                files=files,
-                timeout=30
-            )
+        try:
+            # Make the request to the API
+            response = requests.post(f"{api_url}/process-video", files=files)
             
-            # Check response status
+            # Check for successful response
             if response.status_code == 200:
-                try:
-                    result = response.json()
-                    if 'analysis' in result:
-                        return result['analysis']
-                    else:
-                        st.error(f"Unexpected API response format. Response: {result}")
-                        return None
-                except json.JSONDecodeError as e:
-                    st.error(f"Error parsing API response: {str(e)}")
-                    return None
+                return response.json()
             else:
-                error_msg = f"API request failed with status {response.status_code}"
-                try:
-                    error_details = response.json()
-                    error_msg += f": {error_details.get('detail', '')}"
-                except:
-                    error_msg += f": {response.text}"
-                st.error(error_msg)
+                st.error(f"API Error: {response.status_code} - {response.text}")
                 return None
-                
-    except requests.exceptions.Timeout:
-        st.error("API request timed out. Please try again or check if the API server is running.")
-        return None
-    except requests.exceptions.ConnectionError:
-        st.error("Could not connect to the API. Please check if the API URL is correct and the server is running.")
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        return None
+        except requests.exceptions.RequestException as e:
+            st.error(f"Connection Error: {str(e)}")
+            return None
 
-# Rename the original mock function
-def mock_process_video(video_path):
+# Original mock implementation (used as fallback)
+def process_video_local(video_path):
     """
-    Mock implementation of video processing to use as fallback when API is unavailable
+    Mock implementation of video processing to bypass OpenCV dependency issues
+    when deploying to Streamlit Cloud
     
     Args:
         video_path (str): Path to the input video
@@ -98,21 +70,6 @@ def mock_process_video(video_path):
     }
     
     return results
-
-# Define function alias - this is the main function that will be called
-def process_video(video_path):
-    """
-    Process a video by sending it to the API endpoint or using the mock processor as fallback
-    
-    Args:
-        video_path (str): Path to the input video
-        
-    Returns:
-        dict: Results and scores from the video analysis
-    """
-    # Get the API endpoint from session state or Streamlit secrets
-    api_endpoint = st.session_state.get('api_endpoint', None)
-    return process_video_api(video_path, api_endpoint)
 
 # Define theme colors - Clean navy and purple palette
 NAVY_COLOR = "#1A237E"       # Dark navy for primary elements
@@ -544,7 +501,7 @@ def upload_video():
             
     return None, None
 
-def process_and_display_results(temp_file_path, original_filename):
+def process_and_display_results(temp_file_path, original_filename, api_url, use_remote_api):
     """Process the video and display results"""
     if not temp_file_path:
         return
@@ -556,8 +513,17 @@ def process_and_display_results(temp_file_path, original_filename):
     status_placeholder.info("Processing your video... This may take a few minutes.")
     
     try:
-        # Process the video
-        results = process_video(temp_file_path)
+        # Process the video using either remote or local processing
+        if use_remote_api and api_url:
+            status_placeholder.info(f"Sending video to remote API at {api_url}...")
+            results = process_video_remote(temp_file_path, api_url)
+            if results is None:
+                # Fallback to local processing if remote fails
+                status_placeholder.warning("Remote API failed. Falling back to local processing...")
+                results = process_video_local(temp_file_path)
+        else:
+            status_placeholder.info("Using local processing...")
+            results = process_video_local(temp_file_path)
         
         # Clear the status message
         status_placeholder.empty()
@@ -649,164 +615,25 @@ def process_and_display_results(temp_file_path, original_filename):
 def main():
     """Main app function"""
     local_css()
-    
-    # Initialize session state for API endpoint
-    if 'api_endpoint' not in st.session_state:
-        st.session_state.api_endpoint = None
-    
-    # Add a section in the sidebar to set the API endpoint
-    with st.sidebar:
-        st.markdown(f"<h3 style='color: {NAVY_COLOR};'>Colab Connection</h3>", unsafe_allow_html=True)
-        
-        api_endpoint = st.text_input(
-            "Enter Colab API URL", 
-            value=st.session_state.api_endpoint if st.session_state.api_endpoint else "",
-            placeholder="e.g., https://brown-breads-scream.loca.lt/analyze_video",
-            help="Enter the LocalTunnel URL from your Colab notebook (ends with .loca.lt) followed by /analyze_video"
-        )
-        
-        if api_endpoint:
-            # Auto-append the endpoint path if missing
-            if api_endpoint.endswith('.loca.lt') and not '/analyze_video' in api_endpoint:
-                api_endpoint = f"{api_endpoint}/analyze_video"
-                st.session_state.api_endpoint = api_endpoint
-            elif not '/analyze_video' in api_endpoint:
-                st.warning("Make sure to add '/analyze_video' to the end of your URL")
-            else:
-                st.session_state.api_endpoint = api_endpoint
-            
-            st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
-            
-            # Add a direct link to the fix code
-            st.markdown("""
-            ### Fix 400 Bad Request Error
-
-            **The 400 error means the API is expecting a different format.**
-            
-            1. Run this exact code in your Colab notebook:
-            """)
-            
-            # Download button for the fix code
-            with open("colab_fix.py", "r") as f:
-                colab_fix_code = f.read()
-                
-            st.download_button(
-                "Download Fixed Colab Code",
-                data=colab_fix_code,
-                file_name="colab_fix.py",
-                mime="text/plain",
-                help="Download this file and replace all the code in your Colab notebook with it"
-            )
-            
-            st.markdown("""
-            2. After running the fixed code in Colab, get the new LocalTunnel URL
-            3. Enter the new URL here and try again
-            """)
-            
-            # Add debugging tools option
-            debug_expand = st.expander("🧰 Advanced Debugging Tools", expanded=False)
-            with debug_expand:
-                st.markdown("### API Connection Test")
-                
-                if st.button("Run Advanced Test"):
-                    # Create a small test file
-                    test_file = "test.mp4"
-                    with open(test_file, "wb") as f:
-                        f.write(b"test" * 1000)  # Create a small dummy file
-                    
-                    st.write("Testing connection with a small test file...")
-                    
-                    # Try standard request
-                    try:
-                        with open(test_file, "rb") as f:
-                            file_content = f.read()
-                            
-                        # Try with standard multipart
-                        files = {"file": ("test.mp4", file_content, "video/mp4")}
-                        st.write("Sending request to API...")
-                        
-                        response = requests.post(
-                            api_endpoint, 
-                            files=files,
-                            timeout=30
-                        )
-                        
-                        st.write(f"Status Code: {response.status_code}")
-                        
-                        if response.status_code == 200:
-                            st.success("✅ Connection successful!")
-                            st.json(response.json())
-                        else:
-                            st.error(f"❌ API Error: {response.status_code}")
-                            st.write("Response content:")
-                            st.text(response.text)
-                            
-                            # Try debug endpoint if available
-                            st.write("Trying /debug endpoint...")
-                            debug_endpoint = api_endpoint.replace("/analyze_video", "/debug")
-                            
-                            try:
-                                debug_resp = requests.post(
-                                    debug_endpoint,
-                                    files=files,
-                                    timeout=10
-                                )
-                                
-                                if debug_resp.status_code == 200:
-                                    st.success("Debug endpoint working!")
-                                    st.json(debug_resp.json())
-                                else:
-                                    st.error("Debug endpoint failed")
-                            except Exception as e:
-                                st.error(f"Debug endpoint error: {str(e)}")
-                            
-                    except Exception as e:
-                        st.error(f"Connection failed: {str(e)}")
-                    
-                    # Cleanup
-                    try:
-                        os.remove(test_file)
-                    except:
-                        pass
-                
-                st.markdown("""
-                ### Fixing the 400 Bad Request
-                
-                1. The most common cause is a mismatch between how we're sending the file and how your API is expecting it
-                
-                2. Your FastAPI endpoint should look exactly like this:
-                ```python
-                @app.post("/analyze_video")
-                async def analyze_video_endpoint(file: UploadFile = File(...)):
-                    # Save the uploaded file
-                    file_location = "temp_video.mp4"
-                    with open(file_location, "wb") as f:
-                        content = await file.read()
-                        f.write(content)
-                    
-                    # Process the video
-                    analysis_results = analyze_video(file_location)
-                    
-                    # Return results
-                    return {"analysis": analysis_results}
-                ```
-                
-                3. The key requirements are:
-                   - Parameter name must be exactly `file`
-                   - Must use `UploadFile = File(...)`
-                   - Function must be `async` and use `await file.read()`
-                """)
-        else:
-            st.info("No API endpoint set. Using mock processor.")
-            
-        st.markdown("---")
-    
     header()
+    
+    # Add input field for API URL
+    st.sidebar.title("API Configuration")
+    api_url = st.sidebar.text_input(
+        "FastAPI Endpoint URL",
+        value="http://localhost:8000",
+        help="Enter the Tunnelmole URL from Colab (e.g., https://xxxxx.tunnelmole.net)"
+    )
+    use_remote_api = st.sidebar.checkbox("Use Remote API", value=True, help="If unchecked, will use local mock processing")
+    
+    # If API URL is not provided and remote API is checked, show warning
+    if not api_url and use_remote_api:
+        st.sidebar.warning("Please enter the Tunnelmole URL from your Colab notebook")
     
     temp_file_path, original_filename = upload_video()
     
     if temp_file_path:
-        process_and_display_results(temp_file_path, original_filename)
+        process_and_display_results(temp_file_path, original_filename, api_url, use_remote_api)
     
     # Footer with improved styling
     st.markdown(
