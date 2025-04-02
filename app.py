@@ -410,13 +410,13 @@ def main():
     api_url = st.sidebar.text_input(
         "FastAPI Endpoint URL",
         value="http://localhost:8000",
-        help="Enter the Tunnelmole URL from Colab (e.g., https://xxxxx.tunnelmole.net)"
+        help="Enter the LocalTunnel URL from Colab (e.g., https://xxxx.loca.lt)"
     )
     use_remote_api = st.sidebar.checkbox("Use Remote API", value=True, help="If unchecked, will use local mock processing")
     
     # If API URL is not provided and remote API is checked, show warning
     if not api_url and use_remote_api:
-        st.sidebar.warning("Please enter the Tunnelmole URL from your Colab notebook")
+        st.sidebar.warning("Please enter the LocalTunnel URL from your Colab notebook")
     
     # New interface for prediction instead of video upload
     styled_heading("1", "Simple Prediction Model")
@@ -425,6 +425,7 @@ def main():
         """
         <div class="content-section">
             <p>Enter a value to be processed by the prediction model. The model will multiply your input by 2.</p>
+            <p><small>The model is running in Google Colab and exposed via LocalTunnel. If the connection fails, it will fallback to local processing.</small></p>
         </div>
         """, 
         unsafe_allow_html=True
@@ -445,7 +446,7 @@ def main():
                 results = predict_remote(input_value, api_url)
                 if results is None:
                     # Fallback to local processing if remote fails
-                    status_placeholder.warning("Remote API failed. Falling back to local processing...")
+                    status_placeholder.warning("Remote API failed. Falling back to local processing. Make sure your Colab notebook is running and the LocalTunnel URL is correct.")
                     results = predict_local(input_value)
             else:
                 status_placeholder.info("Using local processing...")
