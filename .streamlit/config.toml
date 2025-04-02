@@ -1,0 +1,16 @@
+[theme]
+# Primary accent color for interactive elements
+primaryColor = "#6F00FF"  # Purple
+
+# Background color for the main content area
+backgroundColor = "#FFFFFF"  # White
+
+# Background color used for the sidebar and most interactive widgets
+secondaryBackgroundColor = "#303F9F"  # Light navy
+
+# Color used for almost all text
+textColor = "#1A237E"  # Dark navy
+
+# Font family for all text in the app, except code blocks
+# Choose either "sans serif", "serif", or "monospace"
+font = "sans serif" 
