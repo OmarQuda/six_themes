@@ -746,56 +746,125 @@ def main():
             
             st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
             
-            # Show Colab compatibility info
-            with st.expander("ℹ️ About the Colab Connection", expanded=False):
-                st.markdown("""
-                ### How the Connection Works
-                
-                The app connects to your YOLOv5 model running in Google Colab through the LocalTunnel service.
-                
-                Your Colab code:
-                - Uses YOLOv5 for object detection
-                - Processes video frames through the model
-                - Returns detection counts for each frame
-                - Available at the `/analyze_video` endpoint
-                
-                This app:
-                - Sends videos to your Colab model
-                - Converts detection counts to skill scores
-                - Displays results in a user-friendly format
-                
-                The connection is temporary and will be lost when your Colab session ends.
-                """)
+            # Add a direct link to the fix code
+            st.markdown("""
+            ### Fix 400 Bad Request Error
+
+            **The 400 error means the API is expecting a different format.**
             
-            # Test connection button
-            if st.button("Test Connection"):
-                # Remove analyze_video from endpoint to check base URL
-                base_url = api_endpoint.split('/analyze_video')[0]
+            1. Run this exact code in your Colab notebook:
+            """)
+            
+            # Download button for the fix code
+            with open("colab_fix.py", "r") as f:
+                colab_fix_code = f.read()
                 
-                st.markdown("### Testing connection...")
-                st.write("Testing API endpoint...")
+            st.download_button(
+                "Download Fixed Colab Code",
+                data=colab_fix_code,
+                file_name="colab_fix.py",
+                mime="text/plain",
+                help="Download this file and replace all the code in your Colab notebook with it"
+            )
+            
+            st.markdown("""
+            2. After running the fixed code in Colab, get the new LocalTunnel URL
+            3. Enter the new URL here and try again
+            """)
+            
+            # Add debugging tools option
+            debug_expand = st.expander("🧰 Advanced Debugging Tools", expanded=False)
+            with debug_expand:
+                st.markdown("### API Connection Test")
                 
-                try:
-                    # Try a GET request first to check connection
-                    response = requests.get(base_url, timeout=5)
-                    st.write(f"Base URL response: Status {response.status_code}")
+                if st.button("Run Advanced Test"):
+                    # Create a small test file
+                    test_file = "test.mp4"
+                    with open(test_file, "wb") as f:
+                        f.write(b"test" * 1000)  # Create a small dummy file
                     
-                    st.success("✅ Connection successful! Your Colab API is running.")
-                    st.markdown("Your YOLOv5 model is ready to process videos.")
-                except Exception as e:
-                    st.error(f"❌ Connection failed: {str(e)}")
-                    st.markdown("""
-                    ### Troubleshooting:
+                    st.write("Testing connection with a small test file...")
                     
-                    1. Make sure your Colab notebook is running
-                    2. Check that LocalTunnel displays a "your url is" message
-                    3. Make sure the URL ends with `/analyze_video`
-                    4. If needed, restart LocalTunnel in Colab:
-                    ```python
-                    # Kill existing LocalTunnel process and start again
-                    !pkill lt && lt --port 8000
-                    ```
-                    """)
+                    # Try standard request
+                    try:
+                        with open(test_file, "rb") as f:
+                            file_content = f.read()
+                            
+                        # Try with standard multipart
+                        files = {"file": ("test.mp4", file_content, "video/mp4")}
+                        st.write("Sending request to API...")
+                        
+                        response = requests.post(
+                            api_endpoint, 
+                            files=files,
+                            timeout=30
+                        )
+                        
+                        st.write(f"Status Code: {response.status_code}")
+                        
+                        if response.status_code == 200:
+                            st.success("✅ Connection successful!")
+                            st.json(response.json())
+                        else:
+                            st.error(f"❌ API Error: {response.status_code}")
+                            st.write("Response content:")
+                            st.text(response.text)
+                            
+                            # Try debug endpoint if available
+                            st.write("Trying /debug endpoint...")
+                            debug_endpoint = api_endpoint.replace("/analyze_video", "/debug")
+                            
+                            try:
+                                debug_resp = requests.post(
+                                    debug_endpoint,
+                                    files=files,
+                                    timeout=10
+                                )
+                                
+                                if debug_resp.status_code == 200:
+                                    st.success("Debug endpoint working!")
+                                    st.json(debug_resp.json())
+                                else:
+                                    st.error("Debug endpoint failed")
+                            except Exception as e:
+                                st.error(f"Debug endpoint error: {str(e)}")
+                            
+                    except Exception as e:
+                        st.error(f"Connection failed: {str(e)}")
+                    
+                    # Cleanup
+                    try:
+                        os.remove(test_file)
+                    except:
+                        pass
+                
+                st.markdown("""
+                ### Fixing the 400 Bad Request
+                
+                1. The most common cause is a mismatch between how we're sending the file and how your API is expecting it
+                
+                2. Your FastAPI endpoint should look exactly like this:
+                ```python
+                @app.post("/analyze_video")
+                async def analyze_video_endpoint(file: UploadFile = File(...)):
+                    # Save the uploaded file
+                    file_location = "temp_video.mp4"
+                    with open(file_location, "wb") as f:
+                        content = await file.read()
+                        f.write(content)
+                    
+                    # Process the video
+                    analysis_results = analyze_video(file_location)
+                    
+                    # Return results
+                    return {"analysis": analysis_results}
+                ```
+                
+                3. The key requirements are:
+                   - Parameter name must be exactly `file`
+                   - Must use `UploadFile = File(...)`
+                   - Function must be `async` and use `await file.read()`
+                """)
         else:
             st.info("No API endpoint set. Using mock processor.")
             
