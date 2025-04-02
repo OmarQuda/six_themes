@@ -717,7 +717,7 @@ def main():
         
         if api_endpoint:
             # Auto-append the endpoint path if missing
-            if api_endpoint.endswith('.loca.lt') and not api_endpoint.endswith('/analyze_video'):
+            if api_endpoint.endswith('.loca.lt') and not '/analyze_video' in api_endpoint:
                 api_endpoint = f"{api_endpoint}/analyze_video"
                 st.session_state.api_endpoint = api_endpoint
             elif not '/analyze_video' in api_endpoint:
@@ -727,16 +727,126 @@ def main():
             
             st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
             
+            # Show Colab fix instructions
+            with st.expander("📝 Fix for the 404 error", expanded=True):
+                st.markdown("""
+                ### Fix for the 404 Error in Colab
+
+                Add this code to your Colab notebook BEFORE running uvicorn:
+                
+                ```python
+                # Add these imports at the top if not already there
+                from fastapi import FastAPI, File, UploadFile, HTTPException
+                
+                # Make sure your endpoint has these exact paths
+                @app.get("/")
+                def root():
+                    return {"message": "API is running! Use /analyze_video for video processing."}
+                    
+                @app.post("/analyze_video")
+                async def analyze_video_endpoint(file: UploadFile = File(...)):
+                    # Your existing code here
+                    # ...
+                ```
+                
+                Then restart the LocalTunnel in your Colab with:
+                
+                ```python
+                # Kill existing LocalTunnel process
+                !pkill lt
+                # Start LocalTunnel again
+                !lt --port 8000
+                ```
+                """)
+            
             # Test connection button
             if st.button("Test Connection"):
+                # Remove analyze_video from endpoint to check base URL
+                base_url = api_endpoint.split('/analyze_video')[0]
+                
+                st.markdown("### Testing connection...")
+                st.write("1. Testing base API URL...")
+                
                 try:
-                    response = requests.get(api_endpoint.replace('/analyze_video', '/'), timeout=5)
+                    # First check the base URL
+                    response = requests.get(base_url, timeout=5)
+                    st.write(f"Base URL response: Status {response.status_code}")
+                    
                     if response.status_code == 200:
-                        st.success("✅ Successfully connected to Colab!")
+                        st.success("✅ Base URL is accessible")
                     else:
-                        st.error(f"❌ Connection error: Status code {response.status_code}")
+                        st.warning(f"⚠️ Base URL returned status {response.status_code} - this may be OK depending on your API")
+                    
+                    # Check for root path docs
+                    st.write("2. Testing API documentation URL...")
+                    docs_url = f"{base_url}/docs"
+                    try:
+                        response = requests.get(docs_url, timeout=5)
+                        st.write(f"Docs URL response: Status {response.status_code}")
+                        if response.status_code == 200:
+                            st.success("✅ FastAPI docs accessible at /docs")
+                            st.markdown(f"[Open API docs]({docs_url})")
+                    except:
+                        st.warning("⚠️ API docs not available (this may be OK)")
+                    
+                    # Check various versions of the endpoint path
+                    st.write("3. Testing endpoint variations...")
+                    endpoint_variations = [
+                        f"{base_url}/analyze_video",
+                        f"{base_url}/analyze_video/",
+                        f"{base_url}/analyze-video",
+                        f"{base_url}/analyze",
+                    ]
+                    
+                    working_endpoint = None
+                    
+                    for endpoint in endpoint_variations:
+                        try:
+                            # Just do a GET request to see if the endpoint exists
+                            # It will likely return a 405 Method Not Allowed if it exists but only accepts POST
+                            response = requests.get(endpoint, timeout=3)
+                            st.write(f"Testing {endpoint}: Status {response.status_code}")
+                            
+                            # If we get 405, that means the endpoint exists but doesn't accept GET
+                            if response.status_code == 405:
+                                st.success(f"✅ Found working endpoint at: {endpoint}")
+                                working_endpoint = endpoint
+                                break
+                        except Exception as e:
+                            st.write(f"Error testing {endpoint}: {str(e)}")
+                    
+                    if working_endpoint:
+                        st.session_state.api_endpoint = working_endpoint
+                        st.success(f"✅ Updated to working endpoint: {working_endpoint}")
+                    else:
+                        st.error("❌ Could not find a working endpoint. Try these troubleshooting steps:")
+                        st.markdown("""
+                        1. Make sure your Colab is running and LocalTunnel shows as connected
+                        2. Check the exact endpoint path in your FastAPI app (`@app.post("/analyze_video")`)
+                        3. Try adding a test endpoint in your FastAPI app:
+                        ```python
+                        @app.get("/test")
+                        def test_endpoint():
+                            return {"status": "working"}
+                        ```
+                        """)
+                
                 except Exception as e:
                     st.error(f"❌ Connection failed: {str(e)}")
+                    st.markdown("""
+                    ### Troubleshooting:
+                    
+                    1. Make sure your Colab notebook is running
+                    2. Check that LocalTunnel displays a "your url is" message
+                    3. Try visiting the LocalTunnel URL directly in your browser
+                    4. Restart the LocalTunnel process in Colab with:
+                    ```python
+                    # Kill existing LocalTunnel process
+                    !pkill lt
+                    # Start LocalTunnel again
+                    !lt --port 8000
+                    ```
+                    """)
         else:
             st.info("No API endpoint set. Using mock processor.")
             
