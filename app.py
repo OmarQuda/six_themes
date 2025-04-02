@@ -51,7 +51,7 @@ def predict_local(value):
     time.sleep(1)
     
     # Simple doubling function (matching the colab.py model)
-    prediction = value * 2
+    prediction = value ** 2
     
     # Compile results
     results = {
