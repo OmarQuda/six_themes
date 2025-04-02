@@ -7,66 +7,56 @@ import random
 from pathlib import Path
 import requests
 
-# Connection to the remote processing endpoint
-def process_video_remote(video_path, api_url):
+# Connection to the remote prediction endpoint
+def predict_remote(value, api_url):
     """
-    Send video to remote API endpoint for processing
+    Send prediction request to remote API endpoint
     
     Args:
-        video_path (str): Path to the input video
+        value (float): Value to be predicted
         api_url (str): URL to the FastAPI endpoint
         
     Returns:
-        dict: Results and scores for different skills
+        dict: Prediction result
     """
-    # Prepare the file for upload
-    with open(video_path, 'rb') as video_file:
-        files = {'video': video_file}
+    # Prepare the request payload
+    payload = {"value": float(value)}
+    
+    try:
+        # Make the request to the API
+        response = requests.post(f"{api_url}/predict", json=payload)
         
-        try:
-            # Make the request to the API
-            response = requests.post(f"{api_url}/process-video", files=files)
-            
-            # Check for successful response
-            if response.status_code == 200:
-                return response.json()
-            else:
-                st.error(f"API Error: {response.status_code} - {response.text}")
-                return None
-        except requests.exceptions.RequestException as e:
-            st.error(f"Connection Error: {str(e)}")
+        # Check for successful response
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"API Error: {response.status_code} - {response.text}")
             return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Connection Error: {str(e)}")
+        return None
 
 # Original mock implementation (used as fallback)
-def process_video_local(video_path):
+def predict_local(value):
     """
-    Mock implementation of video processing to bypass OpenCV dependency issues
-    when deploying to Streamlit Cloud
+    Mock implementation of prediction when API is not available
     
     Args:
-        video_path (str): Path to the input video
+        value (float): Value to be predicted
         
     Returns:
-        dict: Mock results and scores for different skills
+        dict: Mock prediction results
     """
     # Simulate processing time
-    time.sleep(3)
+    time.sleep(1)
     
-    # Generate random scores for demonstration
-    jump_score = random.randint(3, 5)
-    running_score = random.randint(2, 5)
-    passing_score = random.randint(2, 5)
-    
-    # Calculate overall score
-    overall_score = (jump_score + running_score + passing_score) / 3
+    # Simple doubling function (matching the colab.py model)
+    prediction = value * 2
     
     # Compile results
     results = {
-        "jump_score": jump_score,
-        "running_score": running_score,
-        "passing_score": passing_score,
-        "overall_score": overall_score,
-        "processing_time": random.uniform(2.5, 5.0)
+        "prediction": prediction,
+        "processing_time": random.uniform(0.5, 1.5)
     }
     
     return results
@@ -410,208 +400,6 @@ def header():
         unsafe_allow_html=True,
     )
 
-def upload_video():
-    """Handle video file upload and processing"""
-    styled_heading("1", "Upload Your Video")
-    
-    st.markdown(
-        """
-        <div class="content-section">
-            <p>Select a video file showing your soccer skills. We support MP4, MOV, and AVI formats.</p>
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
-    
-    uploaded_file = st.file_uploader(
-        "Choose a soccer video file",
-        type=["mp4", "mov", "avi"],
-        help="Upload a video file of soccer skills to analyze",
-    )
-    
-    if uploaded_file:
-        # Save the uploaded file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
-            # Get file details
-            file_details = {"FileName": uploaded_file.name, "FileType": uploaded_file.type}
-            
-            # Read and write the file in one go
-            data = uploaded_file.getvalue()
-            tmp_file.write(data)
-            
-            # Get the temporary file path
-            temp_file_path = tmp_file.name
-        
-        # Display file details with a custom styled notification instead of st.success
-        st.markdown(
-            f"""
-            <div class="upload-notification">
-                <div style="display: flex; align-items: center;">
-                    <div style="margin-right: 12px;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="{PURPLE_COLOR}">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                        </svg>
-                    </div>
-                    <div>
-                        <span style="font-weight: 600; color: {NAVY_COLOR};">Video uploaded successfully</span>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        
-        st.markdown('<div class="content-section">', unsafe_allow_html=True)
-        col1, col2 = st.columns([3, 2])
-        
-        with col1:
-            # Display video
-            st.video(uploaded_file)
-        
-        with col2:
-            # Show file details in a styled container with improved formatting
-            st.markdown('<div class="file-info-card">', unsafe_allow_html=True)
-            st.markdown(f'<h3 style="color: {NAVY_COLOR}; margin-bottom: 1rem; font-size: 1.3rem;">File Information</h3>', unsafe_allow_html=True)
-            
-            # Custom styled file details instead of st.json
-            st.markdown(
-                f"""
-                <div class="file-detail">
-                    <div class="file-detail-label">Filename:</div>
-                    <div class="file-detail-value">{file_details["FileName"]}</div>
-                </div>
-                <div class="file-detail" style="border-bottom: none;">
-                    <div class="file-detail-label">File Type:</div>
-                    <div class="file-detail-value">{file_details["FileType"]}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Process button with more space
-            st.markdown("<div style='margin-top: 2rem;'>", unsafe_allow_html=True)
-            if st.button("Analyze Soccer Skills", type="primary"):
-                st.markdown("</div>", unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)  # Close content-section
-                return temp_file_path, uploaded_file.name
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Close content-section
-            
-    return None, None
-
-def process_and_display_results(temp_file_path, original_filename, api_url, use_remote_api):
-    """Process the video and display results"""
-    if not temp_file_path:
-        return
-    
-    styled_heading("2", "Processing Video")
-    
-    # Create a placeholder for the processing status
-    status_placeholder = st.empty()
-    status_placeholder.info("Processing your video... This may take a few minutes.")
-    
-    try:
-        # Process the video using either remote or local processing
-        if use_remote_api and api_url:
-            status_placeholder.info(f"Sending video to remote API at {api_url}...")
-            results = process_video_remote(temp_file_path, api_url)
-            if results is None:
-                # Fallback to local processing if remote fails
-                status_placeholder.warning("Remote API failed. Falling back to local processing...")
-                results = process_video_local(temp_file_path)
-        else:
-            status_placeholder.info("Using local processing...")
-            results = process_video_local(temp_file_path)
-        
-        # Clear the status message
-        status_placeholder.empty()
-        
-        # Display results
-        styled_heading("3", "Analysis Results")
-        
-        st.markdown('<div class="content-section">', unsafe_allow_html=True)
-        
-        # Create three columns for the scores with custom styling
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown(
-                f"""
-                <div class="metric-container">
-                    <p class="metric-label">Jumping with Ball</p>
-                    <p class="metric-value">{results['jump_score']}/5</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.progress(results['jump_score']/5)
-            
-        with col2:
-            st.markdown(
-                f"""
-                <div class="metric-container">
-                    <p class="metric-label">Running with Ball</p>
-                    <p class="metric-value">{results['running_score']}/5</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.progress(results['running_score']/5)
-            
-        with col3:
-            st.markdown(
-                f"""
-                <div class="metric-container">
-                    <p class="metric-label">Passing</p>
-                    <p class="metric-value">{results['passing_score']}/5</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.progress(results['passing_score']/5)
-        
-        # Overall score with improved styling
-        st.markdown(
-            f"""
-            <div style='background-color:{NAVY_COLOR}; padding:30px; border-radius:12px; margin-top:30px; box-shadow: 0 8px 16px rgba(0,0,0,0.1);'>
-                <h2 style='color:white; text-align:center; font-size:1.5rem; margin-bottom:1rem;'>Overall Performance Score</h2>
-                <h1 style='color:{PURPLE_LIGHT}; text-align:center; font-size:5rem; font-weight:700; margin:0;'>{results['overall_score']:.1f}<span style='font-size:3rem; opacity:0.8;'>/5</span></h1>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        
-        # Display processing details with more space
-        st.markdown("<div style='margin-top: 2.5rem;'>", unsafe_allow_html=True)
-        st.info(f"Processing time: {results['processing_time']:.2f} seconds")
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Option to download results as JSON with custom styling
-        results_json = json.dumps(results, indent=4)
-        
-        st.markdown("<div style='text-align: center; margin-top: 2rem;'>", unsafe_allow_html=True)
-        st.download_button(
-            label="Download Results (JSON)",
-            data=results_json,
-            file_name=f"{Path(original_filename).stem}_results.json",
-            mime="application/json",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Close content-section
-        
-    except Exception as e:
-        status_placeholder.error(f"Error processing video: {str(e)}")
-        st.exception(e)
-    finally:
-        # Clean up the temporary file
-        try:
-            os.unlink(temp_file_path)
-        except:
-            pass
-
 def main():
     """Main app function"""
     local_css()
@@ -630,10 +418,81 @@ def main():
     if not api_url and use_remote_api:
         st.sidebar.warning("Please enter the Tunnelmole URL from your Colab notebook")
     
-    temp_file_path, original_filename = upload_video()
+    # New interface for prediction instead of video upload
+    styled_heading("1", "Simple Prediction Model")
     
-    if temp_file_path:
-        process_and_display_results(temp_file_path, original_filename, api_url, use_remote_api)
+    st.markdown(
+        """
+        <div class="content-section">
+            <p>Enter a value to be processed by the prediction model. The model will multiply your input by 2.</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    # Input form
+    input_value = st.number_input("Enter a value", value=5.0, step=0.5)
+    
+    if st.button("Get Prediction", type="primary"):
+        # Show processing status
+        status_placeholder = st.empty()
+        status_placeholder.info("Processing your request...")
+        
+        try:
+            # Process the request using either remote or local processing
+            if use_remote_api and api_url:
+                status_placeholder.info(f"Sending request to API at {api_url}...")
+                results = predict_remote(input_value, api_url)
+                if results is None:
+                    # Fallback to local processing if remote fails
+                    status_placeholder.warning("Remote API failed. Falling back to local processing...")
+                    results = predict_local(input_value)
+            else:
+                status_placeholder.info("Using local processing...")
+                results = predict_local(input_value)
+            
+            # Clear the status message
+            status_placeholder.empty()
+            
+            # Display results
+            styled_heading("2", "Prediction Results")
+            
+            st.markdown('<div class="content-section">', unsafe_allow_html=True)
+            
+            # Display the prediction result
+            st.markdown(
+                f"""
+                <div style='background-color:{NAVY_COLOR}; padding:30px; border-radius:12px; margin-top:10px; box-shadow: 0 8px 16px rgba(0,0,0,0.1);'>
+                    <h2 style='color:white; text-align:center; font-size:1.5rem; margin-bottom:1rem;'>Model Prediction</h2>
+                    <h1 style='color:{PURPLE_LIGHT}; text-align:center; font-size:5rem; font-weight:700; margin:0;'>{results['prediction']}</h1>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # If we have processing time in the results
+            if 'processing_time' in results:
+                st.markdown("<div style='margin-top: 2.5rem;'>", unsafe_allow_html=True)
+                st.info(f"Processing time: {results['processing_time']:.2f} seconds")
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Option to download results as JSON
+            results_json = json.dumps(results, indent=4)
+            
+            st.markdown("<div style='text-align: center; margin-top: 2rem;'>", unsafe_allow_html=True)
+            st.download_button(
+                label="Download Results (JSON)",
+                data=results_json,
+                file_name="prediction_results.json",
+                mime="application/json",
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)  # Close content-section
+            
+        except Exception as e:
+            status_placeholder.error(f"Error processing request: {str(e)}")
+            st.exception(e)
     
     # Footer with improved styling
     st.markdown(
