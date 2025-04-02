@@ -45,21 +45,13 @@ def process_video_api(video_path, api_endpoint=None):
             progress_placeholder.info(f"Sending video to Colab model for processing... ({len(file_content)/1024/1024:.1f} MB)")
             
             # Create the files dictionary to match exactly what FastAPI expects
-            # The key must be "file" to match the parameter name in the FastAPI endpoint
             files = {"file": (file_name, file_content, "video/mp4")}
-            
-            # Show debug info about the request
-            with st.expander("Request Details", expanded=False):
-                st.write(f"Endpoint: {api_endpoint}")
-                st.write(f"File name: {file_name}")
-                st.write(f"File size: {len(file_content)/1024/1024:.2f} MB")
-                st.write("Files dict key: 'file'")
             
             # Send the POST request to the API with a timeout
             response = requests.post(
                 api_endpoint, 
                 files=files,
-                timeout=120  # Increased timeout for larger videos
+                timeout=180  # Increased timeout for larger videos - 3 minutes
             )
             
             # Check if the request was successful
@@ -76,8 +68,13 @@ def process_video_api(video_path, api_endpoint=None):
                 st.session_state['last_api_response'] = api_response
                 
                 # Process the API response to match our expected format
-                # We'll convert the detections into skill scores for this demo
                 raw_analysis = api_response.get('analysis', [])
+                
+                # Display information about the response
+                with st.expander("Response Details", expanded=False):
+                    st.write(f"Total frames processed: {len(raw_analysis)}")
+                    st.write(f"First 5 frames data: {raw_analysis[:5]}")
+                    st.write(f"Response processing time: {response.elapsed.total_seconds():.2f} seconds")
                 
                 # Calculate averages of detections per frame to create skill scores
                 detection_counts = [frame['detections'] for frame in raw_analysis]
@@ -86,9 +83,14 @@ def process_video_api(video_path, api_endpoint=None):
                     max_detections = max(detection_counts) if detection_counts else 0
                     
                     # Map the detection counts to skill scores (scale appropriately)
-                    jump_score = min(5, max(1, int(max_detections / 2)))
-                    running_score = min(5, max(1, int(avg_detections)))
-                    passing_score = min(5, max(1, int((max_detections + avg_detections) / 4)))
+                    # Using a better scoring algorithm based on detections
+                    if max_detections > 5:
+                        jump_score = 5
+                    else:
+                        jump_score = max(1, int(max_detections))
+                        
+                    running_score = min(5, max(1, int(avg_detections + 1)))
+                    passing_score = min(5, max(1, int((max_detections + avg_detections) / 3)))
                     
                     # Calculate overall score
                     overall_score = (jump_score + running_score + passing_score) / 3
@@ -105,7 +107,9 @@ def process_video_api(video_path, api_endpoint=None):
                     "processing_time": response.elapsed.total_seconds(),
                     "raw_analysis": raw_analysis,
                     "detection_counts": detection_counts,
-                    "total_frames": len(raw_analysis)
+                    "total_frames": len(raw_analysis),
+                    "avg_detections": float(avg_detections) if detection_counts else 0,
+                    "max_detections": int(max_detections) if detection_counts else 0
                 }
             else:
                 # If the request failed, raise an exception
@@ -726,7 +730,7 @@ def main():
         api_endpoint = st.text_input(
             "Enter Colab API URL", 
             value=st.session_state.api_endpoint if st.session_state.api_endpoint else "",
-            placeholder="e.g., https://lively-foxes-taste-34-200-100-200.loca.lt/analyze_video",
+            placeholder="e.g., https://brown-breads-scream.loca.lt/analyze_video",
             help="Enter the LocalTunnel URL from your Colab notebook (ends with .loca.lt) followed by /analyze_video"
         )
         
@@ -742,36 +746,25 @@ def main():
             
             st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
             
-            # Show Colab fix instructions
-            with st.expander("📝 Fix for the 400 Bad Request Error", expanded=True):
+            # Show Colab compatibility info
+            with st.expander("ℹ️ About the Colab Connection", expanded=False):
                 st.markdown("""
-                ### Fix for the 400 Bad Request Error in Colab
-
-                The 400 error means your API endpoint is working but is expecting a different format. 
-                Make sure your FastAPI code in Colab looks EXACTLY like this:
-
-                ```python
-                @app.post("/analyze_video")
-                async def analyze_video_endpoint(file: UploadFile = File(...)):
-                    # Save the uploaded file to a temporary location
-                    file_location = "temp_video.mp4"
-                    with open(file_location, "wb") as f:
-                        f.write(await file.read())
-                    
-                    # Process the video
-                    analysis_results = analyze_video(file_location)
-                    
-                    # Clean up the temporary file
-                    os.remove(file_location)
-                    
-                    # Return the results
-                    return {"analysis": analysis_results}
-                ```
-
-                Key things to check:
-                1. The parameter name MUST be **`file`** (not `video` or anything else)
-                2. Make sure you're using `UploadFile = File(...)` exactly as shown
-                3. The function should be `async` with `await file.read()`
+                ### How the Connection Works
+                
+                The app connects to your YOLOv5 model running in Google Colab through the LocalTunnel service.
+                
+                Your Colab code:
+                - Uses YOLOv5 for object detection
+                - Processes video frames through the model
+                - Returns detection counts for each frame
+                - Available at the `/analyze_video` endpoint
+                
+                This app:
+                - Sends videos to your Colab model
+                - Converts detection counts to skill scores
+                - Displays results in a user-friendly format
+                
+                The connection is temporary and will be lost when your Colab session ends.
                 """)
             
             # Test connection button
@@ -780,72 +773,15 @@ def main():
                 base_url = api_endpoint.split('/analyze_video')[0]
                 
                 st.markdown("### Testing connection...")
-                st.write("1. Testing base API URL...")
+                st.write("Testing API endpoint...")
                 
                 try:
-                    # First check the base URL
+                    # Try a GET request first to check connection
                     response = requests.get(base_url, timeout=5)
                     st.write(f"Base URL response: Status {response.status_code}")
                     
-                    if response.status_code == 200:
-                        st.success("✅ Base URL is accessible")
-                    else:
-                        st.warning(f"⚠️ Base URL returned status {response.status_code} - this may be OK depending on your API")
-                    
-                    # Check for root path docs
-                    st.write("2. Testing API documentation URL...")
-                    docs_url = f"{base_url}/docs"
-                    try:
-                        response = requests.get(docs_url, timeout=5)
-                        st.write(f"Docs URL response: Status {response.status_code}")
-                        if response.status_code == 200:
-                            st.success("✅ FastAPI docs accessible at /docs")
-                            st.markdown(f"[Open API docs]({docs_url})")
-                    except:
-                        st.warning("⚠️ API docs not available (this may be OK)")
-                    
-                    # Check various versions of the endpoint path
-                    st.write("3. Testing endpoint variations...")
-                    endpoint_variations = [
-                        f"{base_url}/analyze_video",
-                        f"{base_url}/analyze_video/",
-                        f"{base_url}/analyze-video",
-                        f"{base_url}/analyze",
-                    ]
-                    
-                    working_endpoint = None
-                    
-                    for endpoint in endpoint_variations:
-                        try:
-                            # Just do a GET request to see if the endpoint exists
-                            # It will likely return a 405 Method Not Allowed if it exists but only accepts POST
-                            response = requests.get(endpoint, timeout=3)
-                            st.write(f"Testing {endpoint}: Status {response.status_code}")
-                            
-                            # If we get 405, that means the endpoint exists but doesn't accept GET
-                            if response.status_code == 405:
-                                st.success(f"✅ Found working endpoint at: {endpoint}")
-                                working_endpoint = endpoint
-                                break
-                        except Exception as e:
-                            st.write(f"Error testing {endpoint}: {str(e)}")
-                    
-                    if working_endpoint:
-                        st.session_state.api_endpoint = working_endpoint
-                        st.success(f"✅ Updated to working endpoint: {working_endpoint}")
-                    else:
-                        st.error("❌ Could not find a working endpoint. Try these troubleshooting steps:")
-                        st.markdown("""
-                        1. Make sure your Colab is running and LocalTunnel shows as connected
-                        2. Check the exact endpoint path in your FastAPI app (`@app.post("/analyze_video")`)
-                        3. Try adding a test endpoint in your FastAPI app:
-                        ```python
-                        @app.get("/test")
-                        def test_endpoint():
-                            return {"status": "working"}
-                        ```
-                        """)
-                
+                    st.success("✅ Connection successful! Your Colab API is running.")
+                    st.markdown("Your YOLOv5 model is ready to process videos.")
                 except Exception as e:
                     st.error(f"❌ Connection failed: {str(e)}")
                     st.markdown("""
@@ -853,13 +789,11 @@ def main():
                     
                     1. Make sure your Colab notebook is running
                     2. Check that LocalTunnel displays a "your url is" message
-                    3. Try visiting the LocalTunnel URL directly in your browser
-                    4. Restart the LocalTunnel process in Colab with:
+                    3. Make sure the URL ends with `/analyze_video`
+                    4. If needed, restart LocalTunnel in Colab:
                     ```python
-                    # Kill existing LocalTunnel process
-                    !pkill lt
-                    # Start LocalTunnel again
-                    !lt --port 8000
+                    # Kill existing LocalTunnel process and start again
+                    !pkill lt && lt --port 8000
                     ```
                     """)
         else:

@@ -42,16 +42,18 @@ def analyze_video(video_path):
 
 @app.post("/analyze_video")
 async def analyze_video_endpoint(file: UploadFile = File(...)):
-    """
-    API endpoint that accepts a video file, runs YOLO analysis, and returns a JSON summary.
-    """
+       # Save the uploaded file to a temporary location
     file_location = "temp_video.mp4"
     with open(file_location, "wb") as f:
         f.write(await file.read())
-    
+       
+       # Process the video
     analysis_results = analyze_video(file_location)
-    
+       
+       # Clean up the temporary file
     os.remove(file_location)
+       
+       # Return the results
     return {"analysis": analysis_results}
 
 def run_server():
