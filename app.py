@@ -38,14 +38,29 @@ def process_video_api(video_path, api_endpoint=None):
                 
         # Open the video file in binary mode
         with open(video_path, 'rb') as video_file:
-            # Create a files dictionary for the request
-            files = {'file': (os.path.basename(video_path), video_file, 'video/mp4')}
+            file_content = video_file.read()
+            file_name = os.path.basename(video_path)
             
             # Update progress
-            progress_placeholder.info("Sending video to Colab model for processing...")
+            progress_placeholder.info(f"Sending video to Colab model for processing... ({len(file_content)/1024/1024:.1f} MB)")
+            
+            # Create the files dictionary to match exactly what FastAPI expects
+            # The key must be "file" to match the parameter name in the FastAPI endpoint
+            files = {"file": (file_name, file_content, "video/mp4")}
+            
+            # Show debug info about the request
+            with st.expander("Request Details", expanded=False):
+                st.write(f"Endpoint: {api_endpoint}")
+                st.write(f"File name: {file_name}")
+                st.write(f"File size: {len(file_content)/1024/1024:.2f} MB")
+                st.write("Files dict key: 'file'")
             
             # Send the POST request to the API with a timeout
-            response = requests.post(api_endpoint, files=files, timeout=60)
+            response = requests.post(
+                api_endpoint, 
+                files=files,
+                timeout=120  # Increased timeout for larger videos
+            )
             
             # Check if the request was successful
             if response.status_code == 200:
@@ -728,35 +743,35 @@ def main():
             st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
             
             # Show Colab fix instructions
-            with st.expander("📝 Fix for the 404 error", expanded=True):
+            with st.expander("📝 Fix for the 400 Bad Request Error", expanded=True):
                 st.markdown("""
-                ### Fix for the 404 Error in Colab
+                ### Fix for the 400 Bad Request Error in Colab
 
-                Add this code to your Colab notebook BEFORE running uvicorn:
-                
+                The 400 error means your API endpoint is working but is expecting a different format. 
+                Make sure your FastAPI code in Colab looks EXACTLY like this:
+
                 ```python
-                # Add these imports at the top if not already there
-                from fastapi import FastAPI, File, UploadFile, HTTPException
-                
-                # Make sure your endpoint has these exact paths
-                @app.get("/")
-                def root():
-                    return {"message": "API is running! Use /analyze_video for video processing."}
-                    
                 @app.post("/analyze_video")
                 async def analyze_video_endpoint(file: UploadFile = File(...)):
-                    # Your existing code here
-                    # ...
+                    # Save the uploaded file to a temporary location
+                    file_location = "temp_video.mp4"
+                    with open(file_location, "wb") as f:
+                        f.write(await file.read())
+                    
+                    # Process the video
+                    analysis_results = analyze_video(file_location)
+                    
+                    # Clean up the temporary file
+                    os.remove(file_location)
+                    
+                    # Return the results
+                    return {"analysis": analysis_results}
                 ```
-                
-                Then restart the LocalTunnel in your Colab with:
-                
-                ```python
-                # Kill existing LocalTunnel process
-                !pkill lt
-                # Start LocalTunnel again
-                !lt --port 8000
-                ```
+
+                Key things to check:
+                1. The parameter name MUST be **`file`** (not `video` or anything else)
+                2. Make sure you're using `UploadFile = File(...)` exactly as shown
+                3. The function should be `async` with `await file.read()`
                 """)
             
             # Test connection button
