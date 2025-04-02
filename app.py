@@ -8,132 +8,63 @@ import requests
 from pathlib import Path
 
 # Define a function to call the FastAPI endpoint running in Colab
-def process_video_api(video_path, api_endpoint=None):
+def process_video_api(video_file, api_url):
     """
     Process a video by sending it to the FastAPI endpoint running in Google Colab
     
     Args:
-        video_path (str): Path to the video file
-        api_endpoint (str): URL of the FastAPI endpoint
+        video_file (file): Video file object
+        api_url (str): URL of the FastAPI endpoint
         
     Returns:
         dict: Results and scores from the video analysis
     """
-    # If no API endpoint is provided, use the mock processor
-    if not api_endpoint:
-        st.warning("No API endpoint configured. Using mock processor instead.")
-        return mock_process_video(video_path)
-    
-    # Create a progress indicator
-    progress_placeholder = st.empty()
-    progress_placeholder.info("Connecting to Colab model...")
-    
     try:
-        # Ensure the endpoint has the correct path
-        if not api_endpoint.endswith('/analyze_video'):
-            if api_endpoint.endswith('/'):
-                api_endpoint = f"{api_endpoint}analyze_video"
-            else:
-                api_endpoint = f"{api_endpoint}/analyze_video"
-                
-        # Open the video file in binary mode
-        with open(video_path, 'rb') as video_file:
-            file_content = video_file.read()
-            file_name = os.path.basename(video_path)
-            
-            # Update progress
-            progress_placeholder.info(f"Sending video to Colab model for processing... ({len(file_content)/1024/1024:.1f} MB)")
-            
-            # Create the files dictionary to match exactly what FastAPI expects
-            files = {"file": (file_name, file_content, "video/mp4")}
-            
-            # Send the POST request to the API with a timeout
+        # Prepare the file for upload
+        files = {
+            'file': ('video.mp4', video_file.read(), 'video/mp4')
+        }
+        
+        # Show progress while uploading
+        with st.spinner('Uploading video to API...'):
+            # Make the API request
             response = requests.post(
-                api_endpoint, 
+                api_url,
                 files=files,
-                timeout=180  # Increased timeout for larger videos - 3 minutes
+                timeout=30
             )
             
-            # Check if the request was successful
+            # Check response status
             if response.status_code == 200:
-                # Update progress
-                progress_placeholder.success("Video processed successfully!")
-                time.sleep(1)  # Show success message briefly
-                progress_placeholder.empty()
-                
-                # Get the analysis results
-                api_response = response.json()
-                
-                # Log the response for debugging
-                st.session_state['last_api_response'] = api_response
-                
-                # Process the API response to match our expected format
-                raw_analysis = api_response.get('analysis', [])
-                
-                # Display information about the response
-                with st.expander("Response Details", expanded=False):
-                    st.write(f"Total frames processed: {len(raw_analysis)}")
-                    st.write(f"First 5 frames data: {raw_analysis[:5]}")
-                    st.write(f"Response processing time: {response.elapsed.total_seconds():.2f} seconds")
-                
-                # Calculate averages of detections per frame to create skill scores
-                detection_counts = [frame['detections'] for frame in raw_analysis]
-                if detection_counts:
-                    avg_detections = sum(detection_counts) / len(detection_counts)
-                    max_detections = max(detection_counts) if detection_counts else 0
-                    
-                    # Map the detection counts to skill scores (scale appropriately)
-                    # Using a better scoring algorithm based on detections
-                    if max_detections > 5:
-                        jump_score = 5
+                try:
+                    result = response.json()
+                    if 'analysis' in result:
+                        return result['analysis']
                     else:
-                        jump_score = max(1, int(max_detections))
-                        
-                    running_score = min(5, max(1, int(avg_detections + 1)))
-                    passing_score = min(5, max(1, int((max_detections + avg_detections) / 3)))
-                    
-                    # Calculate overall score
-                    overall_score = (jump_score + running_score + passing_score) / 3
-                else:
-                    jump_score = running_score = passing_score = 1
-                    overall_score = 1.0
-                
-                # Return formatted results
-                return {
-                    "jump_score": jump_score,
-                    "running_score": running_score,
-                    "passing_score": passing_score,
-                    "overall_score": overall_score,
-                    "processing_time": response.elapsed.total_seconds(),
-                    "raw_analysis": raw_analysis,
-                    "detection_counts": detection_counts,
-                    "total_frames": len(raw_analysis),
-                    "avg_detections": float(avg_detections) if detection_counts else 0,
-                    "max_detections": int(max_detections) if detection_counts else 0
-                }
+                        st.error(f"Unexpected API response format. Response: {result}")
+                        return None
+                except json.JSONDecodeError as e:
+                    st.error(f"Error parsing API response: {str(e)}")
+                    return None
             else:
-                # If the request failed, raise an exception
-                progress_placeholder.error(f"API returned status code {response.status_code}")
-                response.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        progress_placeholder.error("❌ Failed to connect to the Colab model. Please check the URL and make sure Colab is running.")
-        st.error("Connection to Colab failed. Make sure the Colab notebook is running and the LocalTunnel URL is correct.")
+                error_msg = f"API request failed with status {response.status_code}"
+                try:
+                    error_details = response.json()
+                    error_msg += f": {error_details.get('detail', '')}"
+                except:
+                    error_msg += f": {response.text}"
+                st.error(error_msg)
+                return None
+                
     except requests.exceptions.Timeout:
-        progress_placeholder.error("❌ Request to Colab timed out.")
-        st.error("The video processing request timed out. Try with a shorter video clip.")
+        st.error("API request timed out. Please try again or check if the API server is running.")
+        return None
+    except requests.exceptions.ConnectionError:
+        st.error("Could not connect to the API. Please check if the API URL is correct and the server is running.")
+        return None
     except Exception as e:
-        progress_placeholder.error(f"❌ Error: {str(e)}")
-        st.error(f"Error communicating with the API: {str(e)}")
-    
-    # Add button to view detailed error info in case of failure
-    with st.expander("Debug Information", expanded=False):
-        st.write(f"API Endpoint: {api_endpoint}")
-        st.write(f"Video Path: {video_path}")
-        st.write(f"File Size: {os.path.getsize(video_path) / (1024*1024):.2f} MB")
-    
-    # Fallback to mock processor if API fails
-    st.warning("Falling back to mock processor due to API issues.")
-    return mock_process_video(video_path)
+        st.error(f"An unexpected error occurred: {str(e)}")
+        return None
 
 # Rename the original mock function
 def mock_process_video(video_path):
