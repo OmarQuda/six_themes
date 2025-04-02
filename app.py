@@ -4,13 +4,80 @@ import os
 import time
 import json
 import random
+import requests
 from pathlib import Path
 
-# Mock video processor instead of the real one that requires OpenCV
-def process_video(video_path):
+# Define a function to call the FastAPI endpoint running in Colab
+def process_video_api(video_path, api_endpoint=None):
     """
-    Mock implementation of video processing to bypass OpenCV dependency issues
-    when deploying to Streamlit Cloud
+    Process a video by sending it to the FastAPI endpoint running in Google Colab
+    
+    Args:
+        video_path (str): Path to the video file
+        api_endpoint (str): URL of the FastAPI endpoint
+        
+    Returns:
+        dict: Results and scores from the video analysis
+    """
+    # If no API endpoint is provided, use the mock processor
+    if not api_endpoint:
+        return mock_process_video(video_path)
+    
+    try:
+        # Open the video file in binary mode
+        with open(video_path, 'rb') as video_file:
+            # Create a files dictionary for the request
+            files = {'file': (os.path.basename(video_path), video_file, 'video/mp4')}
+            
+            # Send the POST request to the API
+            response = requests.post(api_endpoint, files=files)
+            
+            # Check if the request was successful
+            if response.status_code == 200:
+                # Get the analysis results
+                api_response = response.json()
+                
+                # Process the API response to match our expected format
+                # We'll convert the detections into skill scores for this demo
+                raw_analysis = api_response.get('analysis', [])
+                
+                # Calculate averages of detections per frame to create skill scores
+                detection_counts = [frame['detections'] for frame in raw_analysis]
+                if detection_counts:
+                    avg_detections = sum(detection_counts) / len(detection_counts)
+                    max_detections = max(detection_counts) if detection_counts else 0
+                    
+                    # Map the detection counts to skill scores
+                    jump_score = min(5, int(max_detections / 2))
+                    running_score = min(5, int(avg_detections))
+                    passing_score = min(5, int(max_detections / 3))
+                    
+                    # Calculate overall score
+                    overall_score = (jump_score + running_score + passing_score) / 3
+                else:
+                    jump_score = running_score = passing_score = overall_score = 0
+                
+                # Return formatted results
+                return {
+                    "jump_score": jump_score,
+                    "running_score": running_score,
+                    "passing_score": passing_score,
+                    "overall_score": overall_score,
+                    "processing_time": response.elapsed.total_seconds(),
+                    "raw_analysis": raw_analysis
+                }
+            else:
+                # If the request failed, raise an exception
+                response.raise_for_status()
+    except Exception as e:
+        st.error(f"Error communicating with the API: {str(e)}")
+        # Fallback to mock processor if API fails
+        return mock_process_video(video_path)
+
+# Rename the original mock function
+def mock_process_video(video_path):
+    """
+    Mock implementation of video processing to use as fallback when API is unavailable
     
     Args:
         video_path (str): Path to the input video
@@ -39,6 +106,21 @@ def process_video(video_path):
     }
     
     return results
+
+# Define function alias - this is the main function that will be called
+def process_video(video_path):
+    """
+    Process a video by sending it to the API endpoint or using the mock processor as fallback
+    
+    Args:
+        video_path (str): Path to the input video
+        
+    Returns:
+        dict: Results and scores from the video analysis
+    """
+    # Get the API endpoint from session state or Streamlit secrets
+    api_endpoint = st.session_state.get('api_endpoint', None)
+    return process_video_api(video_path, api_endpoint)
 
 # Define theme colors - Clean navy and purple palette
 NAVY_COLOR = "#1A237E"       # Dark navy for primary elements
@@ -575,6 +657,30 @@ def process_and_display_results(temp_file_path, original_filename):
 def main():
     """Main app function"""
     local_css()
+    
+    # Initialize session state for API endpoint
+    if 'api_endpoint' not in st.session_state:
+        st.session_state.api_endpoint = None
+    
+    # Add a section in the sidebar to set the API endpoint
+    with st.sidebar:
+        st.markdown(f"<h3 style='color: {NAVY_COLOR};'>Colab Connection</h3>", unsafe_allow_html=True)
+        
+        api_endpoint = st.text_input(
+            "Enter Colab API URL", 
+            value=st.session_state.api_endpoint if st.session_state.api_endpoint else "",
+            placeholder="e.g., https://8abc-35-222-111-222.ngrok.io/analyze_video",
+            help="Enter the public URL provided by ngrok when you run the colab.py notebook"
+        )
+        
+        if api_endpoint:
+            st.session_state.api_endpoint = api_endpoint
+            st.success("API endpoint set! Using real model from Colab.")
+        else:
+            st.info("No API endpoint set. Using mock processor.")
+            
+        st.markdown("---")
+    
     header()
     
     temp_file_path, original_filename = upload_video()
