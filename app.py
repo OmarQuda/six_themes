@@ -21,21 +21,44 @@ def process_video_api(video_path, api_endpoint=None):
     """
     # If no API endpoint is provided, use the mock processor
     if not api_endpoint:
+        st.warning("No API endpoint configured. Using mock processor instead.")
         return mock_process_video(video_path)
     
+    # Create a progress indicator
+    progress_placeholder = st.empty()
+    progress_placeholder.info("Connecting to Colab model...")
+    
     try:
+        # Ensure the endpoint has the correct path
+        if not api_endpoint.endswith('/analyze_video'):
+            if api_endpoint.endswith('/'):
+                api_endpoint = f"{api_endpoint}analyze_video"
+            else:
+                api_endpoint = f"{api_endpoint}/analyze_video"
+                
         # Open the video file in binary mode
         with open(video_path, 'rb') as video_file:
             # Create a files dictionary for the request
             files = {'file': (os.path.basename(video_path), video_file, 'video/mp4')}
             
-            # Send the POST request to the API
-            response = requests.post(api_endpoint, files=files)
+            # Update progress
+            progress_placeholder.info("Sending video to Colab model for processing...")
+            
+            # Send the POST request to the API with a timeout
+            response = requests.post(api_endpoint, files=files, timeout=60)
             
             # Check if the request was successful
             if response.status_code == 200:
+                # Update progress
+                progress_placeholder.success("Video processed successfully!")
+                time.sleep(1)  # Show success message briefly
+                progress_placeholder.empty()
+                
                 # Get the analysis results
                 api_response = response.json()
+                
+                # Log the response for debugging
+                st.session_state['last_api_response'] = api_response
                 
                 # Process the API response to match our expected format
                 # We'll convert the detections into skill scores for this demo
@@ -47,15 +70,16 @@ def process_video_api(video_path, api_endpoint=None):
                     avg_detections = sum(detection_counts) / len(detection_counts)
                     max_detections = max(detection_counts) if detection_counts else 0
                     
-                    # Map the detection counts to skill scores
-                    jump_score = min(5, int(max_detections / 2))
-                    running_score = min(5, int(avg_detections))
-                    passing_score = min(5, int(max_detections / 3))
+                    # Map the detection counts to skill scores (scale appropriately)
+                    jump_score = min(5, max(1, int(max_detections / 2)))
+                    running_score = min(5, max(1, int(avg_detections)))
+                    passing_score = min(5, max(1, int((max_detections + avg_detections) / 4)))
                     
                     # Calculate overall score
                     overall_score = (jump_score + running_score + passing_score) / 3
                 else:
-                    jump_score = running_score = passing_score = overall_score = 0
+                    jump_score = running_score = passing_score = 1
+                    overall_score = 1.0
                 
                 # Return formatted results
                 return {
@@ -64,15 +88,33 @@ def process_video_api(video_path, api_endpoint=None):
                     "passing_score": passing_score,
                     "overall_score": overall_score,
                     "processing_time": response.elapsed.total_seconds(),
-                    "raw_analysis": raw_analysis
+                    "raw_analysis": raw_analysis,
+                    "detection_counts": detection_counts,
+                    "total_frames": len(raw_analysis)
                 }
             else:
                 # If the request failed, raise an exception
+                progress_placeholder.error(f"API returned status code {response.status_code}")
                 response.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        progress_placeholder.error("❌ Failed to connect to the Colab model. Please check the URL and make sure Colab is running.")
+        st.error("Connection to Colab failed. Make sure the Colab notebook is running and the LocalTunnel URL is correct.")
+    except requests.exceptions.Timeout:
+        progress_placeholder.error("❌ Request to Colab timed out.")
+        st.error("The video processing request timed out. Try with a shorter video clip.")
     except Exception as e:
+        progress_placeholder.error(f"❌ Error: {str(e)}")
         st.error(f"Error communicating with the API: {str(e)}")
-        # Fallback to mock processor if API fails
-        return mock_process_video(video_path)
+    
+    # Add button to view detailed error info in case of failure
+    with st.expander("Debug Information", expanded=False):
+        st.write(f"API Endpoint: {api_endpoint}")
+        st.write(f"Video Path: {video_path}")
+        st.write(f"File Size: {os.path.getsize(video_path) / (1024*1024):.2f} MB")
+    
+    # Fallback to mock processor if API fails
+    st.warning("Falling back to mock processor due to API issues.")
+    return mock_process_video(video_path)
 
 # Rename the original mock function
 def mock_process_video(video_path):
@@ -669,13 +711,32 @@ def main():
         api_endpoint = st.text_input(
             "Enter Colab API URL", 
             value=st.session_state.api_endpoint if st.session_state.api_endpoint else "",
-            placeholder="e.g., https://8abc-35-222-111-222.ngrok.io/analyze_video",
-            help="Enter the public URL provided by ngrok when you run the colab.py notebook"
+            placeholder="e.g., https://lively-foxes-taste-34-200-100-200.loca.lt/analyze_video",
+            help="Enter the LocalTunnel URL from your Colab notebook (ends with .loca.lt) followed by /analyze_video"
         )
         
         if api_endpoint:
-            st.session_state.api_endpoint = api_endpoint
-            st.success("API endpoint set! Using real model from Colab.")
+            # Auto-append the endpoint path if missing
+            if api_endpoint.endswith('.loca.lt') and not api_endpoint.endswith('/analyze_video'):
+                api_endpoint = f"{api_endpoint}/analyze_video"
+                st.session_state.api_endpoint = api_endpoint
+            elif not '/analyze_video' in api_endpoint:
+                st.warning("Make sure to add '/analyze_video' to the end of your URL")
+            else:
+                st.session_state.api_endpoint = api_endpoint
+            
+            st.success(f"API endpoint set! Using real model from Colab at: {api_endpoint}")
+            
+            # Test connection button
+            if st.button("Test Connection"):
+                try:
+                    response = requests.get(api_endpoint.replace('/analyze_video', '/'), timeout=5)
+                    if response.status_code == 200:
+                        st.success("✅ Successfully connected to Colab!")
+                    else:
+                        st.error(f"❌ Connection error: Status code {response.status_code}")
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {str(e)}")
         else:
             st.info("No API endpoint set. Using mock processor.")
             
